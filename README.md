@@ -112,7 +112,7 @@ All under `Protendai\WifiDirect\Events`:
 | `GroupCreated` | `string $networkName, string $passphrase, string $ownerIp, int $frequency, string $band` |
 | `Connected` | `bool $isGroupOwner, ?string $groupOwnerIp, int $clients, int $frequency` (the host gets it when a member joins) |
 | `Disconnected` | none |
-| `ConnectionFailed` | `?string $reason`: `permission`, `unsupported`, `busy`, `error`, `timeout`, `group not ready` |
+| `ConnectionFailed` | `?string $reason`: `permission`, `unsupported`, `wifi off`, `location off`, `busy`, `error`, `timeout`, `group not ready`; `?string $detail`: one-line diagnostic for logs |
 | `QrScanned` | `string $text` |
 | `QrScanCancelled` | `?string $reason` |
 

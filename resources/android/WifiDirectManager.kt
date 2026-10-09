@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.wifi.WifiManager
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pManager
@@ -15,6 +16,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import androidx.fragment.app.FragmentActivity
 import com.nativephp.mobile.utils.NativeActionCoordinator
 import org.json.JSONObject
@@ -33,6 +35,7 @@ object WifiDirectManager {
     const val OWNER_IP = "192.168.49.1"
     private const val EVENT_NAMESPACE = "Protendai\\WifiDirect\\Events\\"
     private const val CONNECT_TIMEOUT_MS = 30_000L
+    private const val MAX_BUSY_RETRIES = 3
 
     private var appContext: Context? = null
     private var activityRef: FragmentActivity? = null
@@ -46,7 +49,10 @@ object WifiDirectManager {
 
     fun attach(activity: FragmentActivity) {
         activityRef = activity
-        if (appContext != null) return
+        if (appContext != null) {
+            if (channel == null) channel = manager?.initialize(appContext, Looper.getMainLooper()) { channel = null }
+            return
+        }
 
         val context = activity.applicationContext
         appContext = context
@@ -94,61 +100,89 @@ object WifiDirectManager {
 
     // ── Hosting ──────────────────────────────────────────────────
 
+    /**
+     * Host a group, trying in order: our name/passphrase on the requested
+     * band, then any band, then the legacy no-config API (vendor ROMs that
+     * reject custom configs still accept it). Each step gets BUSY retries
+     * after clearing stale P2P state.
+     */
     fun createGroup(band: String): Boolean {
-        val p2p = manager ?: return fail("unsupported")
-        val ch = channel ?: return fail("unsupported")
-        if (!hasPermission()) return fail("permission")
+        if (!ready()) return false
 
-        // Drop any group we already own so the new name/passphrase take effect.
-        p2p.removeGroup(ch, object : WifiP2pManager.ActionListener {
-            override fun onSuccess() = startGroup(bandCode(band), allowFallback = band == "5ghz")
-            override fun onFailure(reason: Int) = startGroup(bandCode(band), allowFallback = band == "5ghz")
-        })
+        val plan = buildList {
+            if (band != "auto") add(Attempt.Configured(bandCode(band)))
+            add(Attempt.Configured(WifiP2pConfig.GROUP_OWNER_BAND_AUTO))
+            add(Attempt.Legacy)
+        }
+        resetP2p { runCreate(plan, step = 0, busyRetries = 0) }
         return true
     }
 
+    private sealed class Attempt {
+        data class Configured(val band: Int) : Attempt()
+        object Legacy : Attempt()
+    }
+
     @SuppressLint("MissingPermission")
-    private fun startGroup(band: Int, allowFallback: Boolean) {
+    private fun runCreate(plan: List<Attempt>, step: Int, busyRetries: Int) {
         val p2p = manager ?: return
         val ch = channel ?: return
-        val name = "DIRECT-" + randomToken(2) + "-" + randomToken(6)
-        val passphrase = randomToken(16)
+        val attempt = plan[step]
 
-        val config = WifiP2pConfig.Builder()
-            .setNetworkName(name)
-            .setPassphrase(passphrase)
-            .setGroupOperatingBand(band)
-            .enablePersistentMode(false)
-            .build()
-
-        p2p.createGroup(ch, config, object : WifiP2pManager.ActionListener {
+        val listener = object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
-                Log.d(TAG, "group requested: $name band=$band")
-                reportGroup(name, passphrase, attempt = 0)
+                Log.d(TAG, "group requested ($attempt)")
+                pendingCredentials?.let { (name, pass) -> reportGroup(name, pass, 0) } ?: reportGroup(null, null, 0)
             }
 
             override fun onFailure(reason: Int) {
-                Log.w(TAG, "createGroup failed: ${reasonName(reason)} band=$band")
-                // Not every chipset can run 5 GHz P2P alongside its current Wi-Fi link.
-                if (allowFallback) startGroup(WifiP2pConfig.GROUP_OWNER_BAND_AUTO, allowFallback = false)
-                else fail(reasonName(reason))
+                Log.w(TAG, "createGroup failed: ${reasonName(reason)} ($attempt, retry $busyRetries)")
+                when {
+                    reason == WifiP2pManager.BUSY && busyRetries < MAX_BUSY_RETRIES ->
+                        resetP2p(delayMs = 1_000L * (busyRetries + 1)) { runCreate(plan, step, busyRetries + 1) }
+                    step + 1 < plan.size -> resetP2p { runCreate(plan, step + 1, 0) }
+                    else -> fail(reasonName(reason))
+                }
             }
-        })
+        }
+
+        when (attempt) {
+            is Attempt.Configured -> {
+                val name = "DIRECT-" + randomToken(2) + "-" + randomToken(6)
+                val passphrase = randomToken(16)
+                pendingCredentials = name to passphrase
+                val config = WifiP2pConfig.Builder()
+                    .setNetworkName(name)
+                    .setPassphrase(passphrase)
+                    .setGroupOperatingBand(attempt.band)
+                    .enablePersistentMode(false)
+                    .build()
+                p2p.createGroup(ch, config, listener)
+            }
+            Attempt.Legacy -> {
+                pendingCredentials = null
+                p2p.createGroup(ch, listener)
+            }
+        }
     }
+
+    private var pendingCredentials: Pair<String, String>? = null
 
     /** Group info lags createGroup's success callback by a beat; poll briefly. */
     @SuppressLint("MissingPermission")
-    private fun reportGroup(name: String, passphrase: String, attempt: Int) {
+    private fun reportGroup(name: String?, passphrase: String?, attempt: Int) {
         val p2p = manager ?: return
         val ch = channel ?: return
 
         p2p.requestGroupInfo(ch) { group ->
-            if (group != null && group.isGroupOwner) {
+            val groupName = group?.networkName ?: name
+            val groupPass = group?.passphrase ?: passphrase
+            if (group != null && group.isGroupOwner && groupName != null && groupPass != null) {
                 dispatch(
                     "GroupCreated",
                     JSONObject()
-                        .put("networkName", group.networkName ?: name)
-                        .put("passphrase", group.passphrase ?: passphrase)
+                        .put("networkName", groupName)
+                        .put("passphrase", groupPass)
                         .put("ownerIp", OWNER_IP)
                         .put("frequency", group.frequency)
                         .put("band", if (group.frequency >= 4900) "5ghz" else "2.4ghz"),
@@ -163,37 +197,98 @@ object WifiDirectManager {
 
     // ── Joining ──────────────────────────────────────────────────
 
-    @SuppressLint("MissingPermission")
     fun connect(networkName: String, passphrase: String, band: String): Boolean {
-        val p2p = manager ?: return fail("unsupported")
-        val ch = channel ?: return fail("unsupported")
-        if (!hasPermission()) return fail("permission")
-
-        val config = WifiP2pConfig.Builder()
-            .setNetworkName(networkName)
-            .setPassphrase(passphrase)
-            .setGroupOperatingBand(bandCode(band))
-            .enablePersistentMode(false)
-            .build()
+        if (!ready()) return false
 
         clearTimeout()
         connectTimeout = Runnable {
             if (lastState?.optBoolean("connected") != true) {
-                runCatching { p2p.cancelConnect(ch, null) }
+                channel?.let { ch -> runCatching { manager?.cancelConnect(ch, null) } }
                 fail("timeout")
             }
         }.also { main.postDelayed(it, CONNECT_TIMEOUT_MS) }
+
+        resetP2p { runConnect(networkName, passphrase, bandCode(band), busyRetries = 0) }
+        return true
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun runConnect(networkName: String, passphrase: String, band: Int, busyRetries: Int) {
+        val p2p = manager ?: return
+        val ch = channel ?: return
+
+        val config = WifiP2pConfig.Builder()
+            .setNetworkName(networkName)
+            .setPassphrase(passphrase)
+            .setGroupOperatingBand(band)
+            .enablePersistentMode(false)
+            .build()
 
         p2p.connect(ch, config, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
                 Log.d(TAG, "connect requested: $networkName")
             }
+
             override fun onFailure(reason: Int) {
-                clearTimeout()
-                fail(reasonName(reason))
+                Log.w(TAG, "connect failed: ${reasonName(reason)} (retry $busyRetries)")
+                if (reason == WifiP2pManager.BUSY && busyRetries < MAX_BUSY_RETRIES) {
+                    resetP2p(delayMs = 1_000L * (busyRetries + 1)) { runConnect(networkName, passphrase, band, busyRetries + 1) }
+                } else {
+                    clearTimeout()
+                    fail(reasonName(reason))
+                }
             }
         })
+    }
+
+    // ── Preconditions & cleanup ──────────────────────────────────
+
+    /** Fail fast, with a specific reason, on the things users can fix. */
+    private fun ready(): Boolean {
+        if (manager == null) return fail("unsupported")
+        if (channel == null) return fail("unsupported")
+        if (!hasPermission()) return fail("permission")
+        if (!wifiEnabled()) return fail("wifi off")
+        // Android 12 and older (and some vendor builds) refuse P2P with location off.
+        if (Build.VERSION.SDK_INT < 33 && !locationEnabled()) return fail("location off")
         return true
+    }
+
+    /**
+     * Clear whatever might hold the P2P state machine (a lingering group,
+     * a half-finished connect, a discovery another request started), then
+     * continue. Every step ignores its own failure.
+     */
+    private fun resetP2p(delayMs: Long = 400L, then: () -> Unit) {
+        val p2p = manager
+        val ch = channel
+        if (p2p == null || ch == null) {
+            then()
+            return
+        }
+
+        val ignore = { next: () -> Unit ->
+            object : WifiP2pManager.ActionListener {
+                override fun onSuccess() = next()
+                override fun onFailure(reason: Int) = next()
+            }
+        }
+
+        p2p.stopPeerDiscovery(ch, ignore {
+            p2p.cancelConnect(ch, ignore {
+                p2p.removeGroup(ch, ignore {
+                    main.postDelayed({ then() }, delayMs)
+                })
+            })
+        })
+    }
+
+    private fun wifiEnabled(): Boolean =
+        (appContext?.getSystemService(Context.WIFI_SERVICE) as? WifiManager)?.isWifiEnabled == true
+
+    private fun locationEnabled(): Boolean {
+        val location = appContext?.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return true
+        return LocationManagerCompat.isLocationEnabled(location)
     }
 
     fun disconnect() {
@@ -273,8 +368,15 @@ object WifiDirectManager {
     }
 
     private fun fail(reason: String): Boolean {
-        Log.w(TAG, "failed: $reason")
-        dispatch("ConnectionFailed", JSONObject().put("reason", reason))
+        // Several vendor builds answer BUSY/ERROR when Location is off, even on Android 13+.
+        val effective = if (reason in setOf("busy", "error") && !locationEnabled()) "location off" else reason
+        Log.w(TAG, "failed: $effective (raw: $reason, p2pEnabled=$p2pEnabled)")
+        dispatch(
+            "ConnectionFailed",
+            JSONObject()
+                .put("reason", effective)
+                .put("detail", "raw=$reason p2p=${if (p2pEnabled) "on" else "off"} wifi=${if (wifiEnabled()) "on" else "off"} location=${if (locationEnabled()) "on" else "off"} sdk=${Build.VERSION.SDK_INT} ${Build.MANUFACTURER} ${Build.MODEL}"),
+        )
         return false
     }
 
