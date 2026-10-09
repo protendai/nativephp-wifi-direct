@@ -1,0 +1,34 @@
+{
+    "name": "protendai/nativephp-wifi-direct",
+    "description": "Wi-Fi Direct for NativePHP Mobile: phone-to-phone networking with no router, plus built-in QR pairing. Android.",
+    "type": "nativephp-plugin",
+    "license": "proprietary",
+    "keywords": ["nativephp", "nativephp-plugin", "wifi-direct", "p2p", "android", "qr"],
+    "authors": [
+        {"name": "Tendai Karuma"}
+    ],
+    "require": {
+        "php": "^8.2",
+        "nativephp/mobile": "^4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Protendai\\WifiDirect\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Protendai\\WifiDirect\\WifiDirectServiceProvider"
+            ],
+            "aliases": {
+                "WifiDirect": "Protendai\\WifiDirect\\Facades\\WifiDirect"
+            }
+        },
+        "nativephp": {
+            "manifest": "nativephp.json"
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

@@ -1,0 +1,75 @@
+{
+    "namespace": "WifiDirect",
+    "bridge_functions": [
+        {
+            "name": "WifiDirect.Status",
+            "android": "com.protendai.wifidirect.WifiDirectFunctions.Status",
+            "ios": "WifiDirectFunctions.Status"
+        },
+        {
+            "name": "WifiDirect.RequestPermission",
+            "android": "com.protendai.wifidirect.WifiDirectFunctions.RequestPermission",
+            "ios": "WifiDirectFunctions.RequestPermission"
+        },
+        {
+            "name": "WifiDirect.CreateGroup",
+            "android": "com.protendai.wifidirect.WifiDirectFunctions.CreateGroup",
+            "ios": "WifiDirectFunctions.CreateGroup"
+        },
+        {
+            "name": "WifiDirect.Connect",
+            "android": "com.protendai.wifidirect.WifiDirectFunctions.Connect",
+            "ios": "WifiDirectFunctions.Connect"
+        },
+        {
+            "name": "WifiDirect.Disconnect",
+            "android": "com.protendai.wifidirect.WifiDirectFunctions.Disconnect",
+            "ios": "WifiDirectFunctions.Disconnect"
+        },
+        {
+            "name": "WifiDirect.QrCode",
+            "android": "com.protendai.wifidirect.WifiDirectFunctions.QrCode",
+            "ios": "WifiDirectFunctions.QrCode"
+        },
+        {
+            "name": "WifiDirect.ScanQr",
+            "android": "com.protendai.wifidirect.WifiDirectFunctions.ScanQr",
+            "ios": "WifiDirectFunctions.ScanQr"
+        }
+    ],
+    "events": [
+        "Protendai\\WifiDirect\\Events\\PermissionResult",
+        "Protendai\\WifiDirect\\Events\\GroupCreated",
+        "Protendai\\WifiDirect\\Events\\Connected",
+        "Protendai\\WifiDirect\\Events\\Disconnected",
+        "Protendai\\WifiDirect\\Events\\ConnectionFailed",
+        "Protendai\\WifiDirect\\Events\\QrScanned",
+        "Protendai\\WifiDirect\\Events\\QrScanCancelled"
+    ],
+    "android": {
+        "permissions": [
+            "android.permission.ACCESS_WIFI_STATE",
+            "android.permission.CHANGE_WIFI_STATE",
+            "android.permission.ACCESS_NETWORK_STATE",
+            "android.permission.CHANGE_NETWORK_STATE",
+            "<uses-permission android:name=\"android.permission.NEARBY_WIFI_DEVICES\" android:usesPermissionFlags=\"neverForLocation\" />",
+            "<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" android:maxSdkVersion=\"32\" />"
+        ],
+        "features": [
+            {
+                "name": "android.hardware.wifi.direct",
+                "required": false
+            }
+        ],
+        "dependencies": {
+            "implementation": [
+                "com.google.zxing:core:3.5.3",
+                "com.google.android.gms:play-services-code-scanner:16.1.0"
+            ]
+        },
+        "min_version": 29
+    },
+    "ios": {
+        "min_version": "18.0"
+    }
+}
