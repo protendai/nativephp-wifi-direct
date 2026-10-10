@@ -8,6 +8,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.location.LocationManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pManager
@@ -111,8 +113,13 @@ object WifiDirectManager {
         if (!ready()) return false
         clearCreateDeadline()
 
-        val full = buildList {
+        val plan = buildList {
+            // The requested band first (5 GHz is what makes transfers fast;
+            // chips that can't do it refuse instantly).
             if (band != "auto") add(Attempt.Configured(bandCode(band)))
+            // Single-channel chips (Galaxy A05s) can only run a group on the
+            // channel their Wi-Fi connection uses.
+            joinedFrequency()?.let { add(Attempt.Frequency(it)) }
             add(Attempt.Configured(WifiP2pConfig.GROUP_OWNER_BAND_AUTO))
             // Some chips (Samsung A05s with no Wi-Fi network joined) refuse to
             // beacon on the default channel 1; try fixed channels 6 and 11.
@@ -120,9 +127,6 @@ object WifiDirectManager {
             add(Attempt.Frequency(2462))
             add(Attempt.Legacy)
         }
-        // Start from whatever worked last time on this device (e.g. a ROM that
-        // rejects 5 GHz or never forms configured groups), keeping later fallbacks.
-        val plan = lastWorking?.let { worked -> full.indexOf(worked).takeIf { it > 0 }?.let { full.drop(it) } } ?: full
         val gen = ++createGeneration
         // Hard stop: never leave the caller on "getting ready" past the deadline.
         createDeadline = Runnable {
@@ -199,7 +203,6 @@ object WifiDirectManager {
     }
 
     private var pendingCredentials: Pair<String, String>? = null
-    private var lastWorking: Attempt? = null
     private var createDeadline: Runnable? = null
 
     private fun clearCreateDeadline() {
@@ -216,11 +219,27 @@ object WifiDirectManager {
         fail(if (wifiEnabled() && !wifiJoined() && raw !in setOf("busy", "p2p unsupported")) "needs network" else raw)
     }
 
-    /** Wi-Fi is on AND connected to an access point (not just switched on). */
-    @Suppress("DEPRECATION")
+    /**
+     * Wi-Fi is on AND connected to an access point (not just switched on).
+     * Via ConnectivityManager: WifiInfo.networkId is redacted to -1 for apps
+     * without location permission.
+     */
     fun wifiJoined(): Boolean {
-        val wifi = appContext?.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return false
-        return wifi.isWifiEnabled && (wifi.connectionInfo?.networkId ?: -1) != -1
+        val connectivity = appContext?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+        return runCatching {
+            @Suppress("DEPRECATION")
+            connectivity.allNetworks.any { network ->
+                connectivity.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+            }
+        }.getOrDefault(false)
+    }
+
+    /** Frequency (MHz) of the access point we're joined to, if any. */
+    @Suppress("DEPRECATION")
+    private fun joinedFrequency(): Int? {
+        if (!wifiJoined()) return null
+        val wifi = appContext?.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return null
+        return wifi.connectionInfo?.frequency?.takeIf { it > 0 }
     }
     private var createGeneration = 0
 
@@ -241,7 +260,6 @@ object WifiDirectManager {
             val groupName = group?.networkName ?: name
             val groupPass = group?.passphrase ?: passphrase
             if (group != null && group.isGroupOwner && groupName != null && groupPass != null) {
-                lastWorking = plan[step]
                 clearCreateDeadline()
                 dispatch(
                     "GroupCreated",
