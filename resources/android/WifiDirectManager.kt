@@ -109,22 +109,32 @@ object WifiDirectManager {
     fun createGroup(band: String): Boolean {
         if (!ready()) return false
 
-        val plan = buildList {
+        val full = buildList {
             if (band != "auto") add(Attempt.Configured(bandCode(band)))
             add(Attempt.Configured(WifiP2pConfig.GROUP_OWNER_BAND_AUTO))
+            // Some chips (Samsung A05s with no Wi-Fi network joined) refuse to
+            // beacon on the default channel 1; try fixed channels 6 and 11.
+            add(Attempt.Frequency(2437))
+            add(Attempt.Frequency(2462))
             add(Attempt.Legacy)
         }
-        resetP2p { runCreate(plan, step = 0, busyRetries = 0) }
+        // Start from whatever worked last time on this device (e.g. a ROM that
+        // rejects 5 GHz or never forms configured groups), keeping later fallbacks.
+        val plan = lastWorking?.let { worked -> full.indexOf(worked).takeIf { it > 0 }?.let { full.drop(it) } } ?: full
+        val gen = ++createGeneration
+        resetP2p { runCreate(plan, step = 0, busyRetries = 0, gen = gen) }
         return true
     }
 
     private sealed class Attempt {
         data class Configured(val band: Int) : Attempt()
+        data class Frequency(val mhz: Int) : Attempt()
         object Legacy : Attempt()
     }
 
     @SuppressLint("MissingPermission")
-    private fun runCreate(plan: List<Attempt>, step: Int, busyRetries: Int) {
+    private fun runCreate(plan: List<Attempt>, step: Int, busyRetries: Int, gen: Int) {
+        if (gen != createGeneration) return
         val p2p = manager ?: return
         val ch = channel ?: return
         val attempt = plan[step]
@@ -132,15 +142,16 @@ object WifiDirectManager {
         val listener = object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
                 Log.d(TAG, "group requested ($attempt)")
-                pendingCredentials?.let { (name, pass) -> reportGroup(name, pass, 0) } ?: reportGroup(null, null, 0)
+                val (name, pass) = pendingCredentials ?: (null to null)
+                reportGroup(name, pass, plan, step, gen, poll = 0)
             }
 
             override fun onFailure(reason: Int) {
                 Log.w(TAG, "createGroup failed: ${reasonName(reason)} ($attempt, retry $busyRetries)")
                 when {
                     reason == WifiP2pManager.BUSY && busyRetries < MAX_BUSY_RETRIES ->
-                        resetP2p(delayMs = 1_000L * (busyRetries + 1)) { runCreate(plan, step, busyRetries + 1) }
-                    step + 1 < plan.size -> resetP2p { runCreate(plan, step + 1, 0) }
+                        resetP2p(delayMs = 1_000L * (busyRetries + 1)) { runCreate(plan, step, busyRetries + 1, gen) }
+                    step + 1 < plan.size -> resetP2p { runCreate(plan, step + 1, 0, gen) }
                     else -> fail(reasonName(reason))
                 }
             }
@@ -159,6 +170,18 @@ object WifiDirectManager {
                     .build()
                 p2p.createGroup(ch, config, listener)
             }
+            is Attempt.Frequency -> {
+                val name = "DIRECT-" + randomToken(2) + "-" + randomToken(6)
+                val passphrase = randomToken(16)
+                pendingCredentials = name to passphrase
+                val config = WifiP2pConfig.Builder()
+                    .setNetworkName(name)
+                    .setPassphrase(passphrase)
+                    .setGroupOperatingFrequency(attempt.mhz)
+                    .enablePersistentMode(false)
+                    .build()
+                p2p.createGroup(ch, config, listener)
+            }
             Attempt.Legacy -> {
                 pendingCredentials = null
                 p2p.createGroup(ch, listener)
@@ -167,17 +190,27 @@ object WifiDirectManager {
     }
 
     private var pendingCredentials: Pair<String, String>? = null
+    private var lastWorking: Attempt? = null
+    private var createGeneration = 0
 
-    /** Group info lags createGroup's success callback by a beat; poll briefly. */
+    /**
+     * Group info lags createGroup's success callback, by several seconds on
+     * some ROMs (Samsung A05s: >5 s), and some accept a configured group that
+     * never forms. Poll, then move on to the next attempt instead of failing.
+     */
     @SuppressLint("MissingPermission")
-    private fun reportGroup(name: String?, passphrase: String?, attempt: Int) {
+    private fun reportGroup(name: String?, passphrase: String?, plan: List<Attempt>, step: Int, gen: Int, poll: Int) {
+        if (gen != createGeneration) return
         val p2p = manager ?: return
         val ch = channel ?: return
+        val maxPolls = when (plan[step]) { Attempt.Legacy -> 30; is Attempt.Frequency -> 10; else -> 16 } // × 500 ms
 
         p2p.requestGroupInfo(ch) { group ->
+            if (gen != createGeneration) return@requestGroupInfo
             val groupName = group?.networkName ?: name
             val groupPass = group?.passphrase ?: passphrase
             if (group != null && group.isGroupOwner && groupName != null && groupPass != null) {
+                lastWorking = plan[step]
                 dispatch(
                     "GroupCreated",
                     JSONObject()
@@ -187,8 +220,11 @@ object WifiDirectManager {
                         .put("frequency", group.frequency)
                         .put("band", if (group.frequency >= 4900) "5ghz" else "2.4ghz"),
                 )
-            } else if (attempt < 10) {
-                main.postDelayed({ reportGroup(name, passphrase, attempt + 1) }, 500)
+            } else if (poll < maxPolls) {
+                main.postDelayed({ reportGroup(name, passphrase, plan, step, gen, poll + 1) }, 500)
+            } else if (step + 1 < plan.size) {
+                Log.w(TAG, "group not formed after ${maxPolls / 2} s (${plan[step]}), trying next")
+                resetP2p { runCreate(plan, step + 1, 0, gen) }
             } else {
                 fail("group not ready")
             }
@@ -293,6 +329,7 @@ object WifiDirectManager {
 
     fun disconnect() {
         clearTimeout()
+        createGeneration++ // abandon any createGroup still polling
         val p2p = manager ?: return
         val ch = channel ?: return
         runCatching { p2p.cancelConnect(ch, null) }
