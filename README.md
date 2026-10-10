@@ -10,7 +10,7 @@ Phone-to-phone networking with **no router and no internet**: one device hosts a
 | Platform | Support |
 |---|---|
 | Android 10+ (API 29) | Full |
-| iOS | `status()` reports `supported: false`; `qrCode()` works. iOS has no public Wi-Fi Direct API. |
+| iOS 18+ | Join only: scan an Android phone's code (`scanQr()`) and `connect()` to its group as a Wi-Fi client (NEHotspotConfiguration). `status()` reports `canHost: false`; `createGroup()` fails with `cannot host`. Needs the Hotspot Configuration entitlement (declared by the plugin) on a paid Apple Developer team. |
 
 ## Install
 
@@ -91,7 +91,7 @@ Call `WifiDirect::disconnect()` when done; both devices return to their normal W
 
 | Method | Returns | Notes |
 |---|---|---|
-| `status()` | `array` | `supported, enabled, fiveGhz, permission, wifiJoined, connected, isGroupOwner, groupOwnerIp` |
+| `status()` | `array` | `supported, canHost, enabled, fiveGhz, permission, wifiJoined, connected, isGroupOwner, groupOwnerIp` |
 | `isSupported()` | `bool` | Device has Wi-Fi Direct (and Android 10+) |
 | `requestPermission()` | `void` | → `PermissionResult` |
 | `createGroup(string $band = '5ghz', int $timeoutSeconds = 20)` | `void` | `'5ghz'`, `'2.4ghz'` or `'auto'`; falls back to auto, fixed channels 6/11 and the legacy API if the chipset refuses. → `GroupCreated` / `ConnectionFailed`, always within the timeout |
@@ -112,7 +112,7 @@ All under `Protendai\WifiDirect\Events`:
 | `GroupCreated` | `string $networkName, string $passphrase, string $ownerIp, int $frequency, string $band` |
 | `Connected` | `bool $isGroupOwner, ?string $groupOwnerIp, int $clients, int $frequency` (the host gets it when a member joins) |
 | `Disconnected` | none |
-| `ConnectionFailed` | `?string $reason`: `permission`, `unsupported`, `wifi off`, `location off`, `busy`, `error`, `timeout`, `group not ready`, `needs network` (this phone can only host while Wi-Fi is joined to a network, e.g. Galaxy A05s: let the other phone host instead); `?string $detail`: one-line diagnostic for logs |
+| `ConnectionFailed` | `?string $reason`: `permission`, `unsupported`, `wifi off`, `location off`, `busy`, `error`, `timeout`, `group not ready`, `needs network` (this phone can only host while Wi-Fi is joined to a network, e.g. Galaxy A05s: let the other phone host instead), `cannot host` (iOS: iPhones can only join, so let the Android phone host), `declined` (iOS: the user declined the join prompt); `?string $detail`: one-line diagnostic for logs |
 | `QrScanned` | `string $text` |
 | `QrScanCancelled` | `?string $reason` |
 

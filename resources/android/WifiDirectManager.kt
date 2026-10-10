@@ -91,6 +91,7 @@ object WifiDirectManager {
 
         return mapOf(
             "supported" to supported,
+            "canHost" to supported,
             "enabled" to p2pEnabled,
             "fiveGhz" to (wifi?.is5GHzBandSupported == true),
             "permission" to hasPermission(),

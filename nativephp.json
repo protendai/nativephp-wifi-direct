@@ -70,6 +70,12 @@
         "min_version": 29
     },
     "ios": {
-        "min_version": "18.0"
+        "min_version": "18.0",
+        "info_plist": {
+            "NSCameraUsageDescription": "The camera scans the other phone's pairing code."
+        },
+        "entitlements": {
+            "com.apple.developer.networking.HotspotConfiguration": true
+        }
     }
 }

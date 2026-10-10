@@ -19,12 +19,14 @@ class WifiDirect
     /**
      * Capabilities and current state.
      *
-     * @return array{supported: bool, enabled: bool, fiveGhz: bool, permission: bool, wifiJoined: bool, connected: bool, isGroupOwner: bool, groupOwnerIp: string}
+     * @return array{supported: bool, canHost: bool, enabled: bool, fiveGhz: bool, permission: bool, wifiJoined: bool, connected: bool, isGroupOwner: bool, groupOwnerIp: string}
      */
     public function status(): array
     {
         $defaults = [
             'supported' => false,
+            // Can host a group (show a code). iOS can only join (scan an Android's code).
+            'canHost' => true,
             'enabled' => false,
             'fiveGhz' => false,
             'permission' => false,
