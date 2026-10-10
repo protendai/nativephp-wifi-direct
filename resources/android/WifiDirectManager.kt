@@ -92,6 +92,7 @@ object WifiDirectManager {
             "enabled" to p2pEnabled,
             "fiveGhz" to (wifi?.is5GHzBandSupported == true),
             "permission" to hasPermission(),
+            "wifiJoined" to wifiJoined(),
             "connected" to (state?.optBoolean("connected") ?: false),
             "isGroupOwner" to (state?.optBoolean("isGroupOwner") ?: false),
             "groupOwnerIp" to (state?.optString("groupOwnerIp") ?: ""),
@@ -106,8 +107,9 @@ object WifiDirectManager {
      * reject custom configs still accept it). Each step gets BUSY retries
      * after clearing stale P2P state.
      */
-    fun createGroup(band: String): Boolean {
+    fun createGroup(band: String, timeoutMs: Long = 20_000L): Boolean {
         if (!ready()) return false
+        clearCreateDeadline()
 
         val full = buildList {
             if (band != "auto") add(Attempt.Configured(bandCode(band)))
@@ -122,6 +124,13 @@ object WifiDirectManager {
         // rejects 5 GHz or never forms configured groups), keeping later fallbacks.
         val plan = lastWorking?.let { worked -> full.indexOf(worked).takeIf { it > 0 }?.let { full.drop(it) } } ?: full
         val gen = ++createGeneration
+        // Hard stop: never leave the caller on "getting ready" past the deadline.
+        createDeadline = Runnable {
+            if (gen != createGeneration) return@Runnable
+            createGeneration++
+            Log.w(TAG, "createGroup gave up after ${timeoutMs / 1000} s")
+            resetP2p { failHosting() }
+        }.also { main.postDelayed(it, timeoutMs) }
         resetP2p { runCreate(plan, step = 0, busyRetries = 0, gen = gen) }
         return true
     }
@@ -152,7 +161,7 @@ object WifiDirectManager {
                     reason == WifiP2pManager.BUSY && busyRetries < MAX_BUSY_RETRIES ->
                         resetP2p(delayMs = 1_000L * (busyRetries + 1)) { runCreate(plan, step, busyRetries + 1, gen) }
                     step + 1 < plan.size -> resetP2p { runCreate(plan, step + 1, 0, gen) }
-                    else -> fail(reasonName(reason))
+                    else -> { clearCreateDeadline(); failHosting(reasonName(reason)) }
                 }
             }
         }
@@ -191,6 +200,28 @@ object WifiDirectManager {
 
     private var pendingCredentials: Pair<String, String>? = null
     private var lastWorking: Attempt? = null
+    private var createDeadline: Runnable? = null
+
+    private fun clearCreateDeadline() {
+        createDeadline?.let { main.removeCallbacks(it) }
+        createDeadline = null
+    }
+
+    /**
+     * Hosting failed for good. Some chips (Samsung Galaxy A05s) can only run
+     * a group while Wi-Fi is joined to a network; say so, so the app can offer
+     * the other direction (the other phone hosts, this one scans).
+     */
+    private fun failHosting(raw: String = "group not ready") {
+        fail(if (wifiEnabled() && !wifiJoined() && raw !in setOf("busy", "p2p unsupported")) "needs network" else raw)
+    }
+
+    /** Wi-Fi is on AND connected to an access point (not just switched on). */
+    @Suppress("DEPRECATION")
+    fun wifiJoined(): Boolean {
+        val wifi = appContext?.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return false
+        return wifi.isWifiEnabled && (wifi.connectionInfo?.networkId ?: -1) != -1
+    }
     private var createGeneration = 0
 
     /**
@@ -211,6 +242,7 @@ object WifiDirectManager {
             val groupPass = group?.passphrase ?: passphrase
             if (group != null && group.isGroupOwner && groupName != null && groupPass != null) {
                 lastWorking = plan[step]
+                clearCreateDeadline()
                 dispatch(
                     "GroupCreated",
                     JSONObject()
@@ -226,7 +258,8 @@ object WifiDirectManager {
                 Log.w(TAG, "group not formed after ${maxPolls / 2} s (${plan[step]}), trying next")
                 resetP2p { runCreate(plan, step + 1, 0, gen) }
             } else {
-                fail("group not ready")
+                clearCreateDeadline()
+                failHosting()
             }
         }
     }
@@ -330,6 +363,7 @@ object WifiDirectManager {
     fun disconnect() {
         clearTimeout()
         createGeneration++ // abandon any createGroup still polling
+        clearCreateDeadline()
         val p2p = manager ?: return
         val ch = channel ?: return
         runCatching { p2p.cancelConnect(ch, null) }

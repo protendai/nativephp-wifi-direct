@@ -50,13 +50,15 @@ object WifiDirectFunctions {
 
     /**
      * Host a group (this device becomes the group owner at 192.168.49.1).
-     * Params: band ("5ghz" | "2.4ghz" | "auto"). Result: GroupCreated or ConnectionFailed.
+     * Params: band ("5ghz" | "2.4ghz" | "auto"), timeoutSeconds (default 20).
+     * Result: GroupCreated or ConnectionFailed (by the deadline at the latest).
      */
     class CreateGroup(private val activity: FragmentActivity) : BridgeFunction {
         override fun execute(parameters: Map<String, Any>): Map<String, Any> {
             WifiDirectManager.attach(activity)
             val band = parameters["band"] as? String ?: "5ghz"
-            return mapOf("ok" to WifiDirectManager.createGroup(band))
+            val timeout = (parameters["timeoutSeconds"] as? Number)?.toLong() ?: 20L
+            return mapOf("ok" to WifiDirectManager.createGroup(band, timeout * 1000))
         }
     }
 

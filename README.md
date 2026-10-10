@@ -91,10 +91,10 @@ Call `WifiDirect::disconnect()` when done; both devices return to their normal W
 
 | Method | Returns | Notes |
 |---|---|---|
-| `status()` | `array` | `supported, enabled, fiveGhz, permission, connected, isGroupOwner, groupOwnerIp` |
+| `status()` | `array` | `supported, enabled, fiveGhz, permission, wifiJoined, connected, isGroupOwner, groupOwnerIp` |
 | `isSupported()` | `bool` | Device has Wi-Fi Direct (and Android 10+) |
 | `requestPermission()` | `void` | → `PermissionResult` |
-| `createGroup(string $band = '5ghz')` | `void` | `'5ghz'`, `'2.4ghz'` or `'auto'`; 5 GHz falls back to auto if the chipset refuses. → `GroupCreated` / `ConnectionFailed` |
+| `createGroup(string $band = '5ghz', int $timeoutSeconds = 20)` | `void` | `'5ghz'`, `'2.4ghz'` or `'auto'`; falls back to auto, fixed channels 6/11 and the legacy API if the chipset refuses. → `GroupCreated` / `ConnectionFailed`, always within the timeout |
 | `connect(string $networkName, string $passphrase, string $band = 'auto')` | `void` | Silent join. → `Connected` / `ConnectionFailed` (30 s timeout) |
 | `disconnect()` | `void` | → `Disconnected` |
 | `qrCode(string $text, string $dest, int $size = 640, string $fg = '#000000', string $bg = '#FFFFFF')` | `bool` | Writes a PNG |
@@ -112,7 +112,7 @@ All under `Protendai\WifiDirect\Events`:
 | `GroupCreated` | `string $networkName, string $passphrase, string $ownerIp, int $frequency, string $band` |
 | `Connected` | `bool $isGroupOwner, ?string $groupOwnerIp, int $clients, int $frequency` (the host gets it when a member joins) |
 | `Disconnected` | none |
-| `ConnectionFailed` | `?string $reason`: `permission`, `unsupported`, `wifi off`, `location off`, `busy`, `error`, `timeout`, `group not ready`; `?string $detail`: one-line diagnostic for logs |
+| `ConnectionFailed` | `?string $reason`: `permission`, `unsupported`, `wifi off`, `location off`, `busy`, `error`, `timeout`, `group not ready`, `needs network` (this phone can only host while Wi-Fi is joined to a network, e.g. Galaxy A05s: let the other phone host instead); `?string $detail`: one-line diagnostic for logs |
 | `QrScanned` | `string $text` |
 | `QrScanCancelled` | `?string $reason` |
 

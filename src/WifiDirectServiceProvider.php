@@ -28,7 +28,7 @@ class WifiDirectServiceProvider extends ServiceProvider
             return;
         }
 
-        FakeBridge::macro('withWifiDirect', function (bool $supported = true, bool $permission = true, bool $fiveGhz = true): FakeBridge {
+        FakeBridge::macro('withWifiDirect', function (bool $supported = true, bool $permission = true, bool $fiveGhz = true, bool $wifiJoined = true): FakeBridge {
             /** @var FakeBridge $this */
             return $this
                 ->respondTo('WifiDirect.Status', [
@@ -36,6 +36,7 @@ class WifiDirectServiceProvider extends ServiceProvider
                     'enabled' => $supported,
                     'fiveGhz' => $fiveGhz,
                     'permission' => $permission,
+                    'wifiJoined' => $wifiJoined,
                     'connected' => false,
                     'isGroupOwner' => false,
                     'groupOwnerIp' => '',

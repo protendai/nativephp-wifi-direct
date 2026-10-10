@@ -19,7 +19,7 @@ class WifiDirect
     /**
      * Capabilities and current state.
      *
-     * @return array{supported: bool, enabled: bool, fiveGhz: bool, permission: bool, connected: bool, isGroupOwner: bool, groupOwnerIp: string}
+     * @return array{supported: bool, enabled: bool, fiveGhz: bool, permission: bool, wifiJoined: bool, connected: bool, isGroupOwner: bool, groupOwnerIp: string}
      */
     public function status(): array
     {
@@ -28,6 +28,8 @@ class WifiDirect
             'enabled' => false,
             'fiveGhz' => false,
             'permission' => false,
+            // Wi-Fi joined to a network; assumed true where the platform doesn't say.
+            'wifiJoined' => true,
             'connected' => false,
             'isGroupOwner' => false,
             'groupOwnerIp' => '',
@@ -53,11 +55,13 @@ class WifiDirect
     /**
      * Host a group. Prefers $band ('5ghz', '2.4ghz' or 'auto'); a 5 GHz
      * request falls back to auto when the chipset can't do it.
-     * Answers with GroupCreated or ConnectionFailed.
+     * Answers with GroupCreated or ConnectionFailed within $timeoutSeconds.
+     * ConnectionFailed reason "needs network": this phone can only host while
+     * Wi-Fi is joined to a network, so let the other phone host instead.
      */
-    public function createGroup(string $band = '5ghz'): void
+    public function createGroup(string $band = '5ghz', int $timeoutSeconds = 20): void
     {
-        $this->call('WifiDirect.CreateGroup', ['band' => $band]);
+        $this->call('WifiDirect.CreateGroup', ['band' => $band, 'timeoutSeconds' => $timeoutSeconds]);
     }
 
     /**
