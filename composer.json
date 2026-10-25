@@ -1,19 +1,35 @@
 {
     "name": "protendai/nativephp-wifi-direct",
-    "description": "Wi-Fi Direct for NativePHP Mobile: phone-to-phone networking with no router, plus built-in QR pairing. Android.",
+    "description": "Wi-Fi Direct for NativePHP Mobile: phone-to-phone networking with no router, with built-in QR pairing. Android hosts and joins; iOS joins an Android phone's group.",
     "type": "nativephp-plugin",
-    "license": "proprietary",
-    "keywords": ["nativephp", "nativephp-plugin", "wifi-direct", "p2p", "android", "qr"],
+    "license": "MIT",
+    "keywords": ["nativephp", "nativephp-plugin", "nativephp-mobile", "wifi-direct", "p2p", "offline", "android", "ios", "qr", "laravel"],
+    "homepage": "https://github.com/protendai/nativephp-wifi-direct",
+    "support": {
+        "issues": "https://github.com/protendai/nativephp-wifi-direct/issues",
+        "source": "https://github.com/protendai/nativephp-wifi-direct"
+    },
     "authors": [
-        {"name": "Tendai Karuma"}
+        {
+            "name": "Tendai Karuma",
+            "email": "karumatendai@gmail.com"
+        }
     ],
     "require": {
         "php": "^8.2",
         "nativephp/mobile": "^4.0"
     },
+    "require-dev": {
+        "pestphp/pest": "^3.0|^4.0|^5.0"
+    },
     "autoload": {
         "psr-4": {
             "Protendai\\WifiDirect\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Protendai\\WifiDirect\\Tests\\": "tests/"
         }
     },
     "extra": {
@@ -27,6 +43,14 @@
         },
         "nativephp": {
             "manifest": "nativephp.json"
+        }
+    },
+    "scripts": {
+        "test": "pest"
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
         }
     },
     "minimum-stability": "stable",
