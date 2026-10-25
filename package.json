@@ -1,0 +1,30 @@
+{
+    "name": "@protendai/nativephp-wifi-direct",
+    "version": "1.0.0",
+    "description": "JavaScript API for the Wi-Fi Direct NativePHP Mobile plugin (Inertia, Vue, React).",
+    "private": false,
+    "type": "module",
+    "main": "resources/js/index.js",
+    "module": "resources/js/index.js",
+    "types": "resources/js/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./resources/js/index.d.ts",
+            "import": "./resources/js/index.js"
+        }
+    },
+    "files": [
+        "resources/js"
+    ],
+    "keywords": ["nativephp", "wifi-direct", "p2p", "qr"],
+    "author": "Tendai Karuma <karumatendai@gmail.com>",
+    "license": "MIT",
+    "homepage": "https://github.com/protendai/nativephp-wifi-direct",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/protendai/nativephp-wifi-direct.git"
+    },
+    "bugs": {
+        "url": "https://github.com/protendai/nativephp-wifi-direct/issues"
+    }
+}
