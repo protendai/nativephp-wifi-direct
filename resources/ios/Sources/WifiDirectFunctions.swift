@@ -1,8 +1,7 @@
-import AVFoundation
+import CoreGraphics
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import Foundation
-import NetworkExtension
 import UIKit
 
 // iOS has no public Wi-Fi Direct API, so an iPhone can't host a group. It
@@ -25,31 +24,35 @@ enum WifiDirectFunctions {
     /// scanner asks for the camera itself.
     class RequestPermission: BridgeFunction {
         func execute(parameters: [String: Any]) throws -> [String: Any] {
-            WifiDirectJoiner.dispatch("PermissionResult", ["granted": true])
+            WifiDirectJoiner.dispatch("PermissionResult", ["granted": true, "permanentlyDenied": false])
             return BridgeResponse.success(data: ["ok": true, "granted": true])
         }
     }
 
     class CreateGroup: BridgeFunction {
         func execute(parameters: [String: Any]) throws -> [String: Any] {
-            WifiDirectJoiner.fail("cannot host", detail: "iOS can only join a group; let the other phone show the code")
+            WifiDirectJoiner.fail("cannot host", detail: "iOS can only join a group; let the other device show the code")
             return BridgeResponse.success(data: ["ok": false])
         }
     }
 
-    /// Params: networkName, passphrase (band is ignored on iOS).
+    /// Params: networkName, passphrase (band is ignored on iOS). Malformed
+    /// credentials are refused here ({ok: false, error}) and no event follows.
     class Connect: BridgeFunction {
         func execute(parameters: [String: Any]) throws -> [String: Any] {
-            guard let name = parameters["networkName"] as? String, !name.isEmpty,
+            guard let name = parameters["networkName"] as? String,
                   let passphrase = parameters["passphrase"] as? String else {
-                WifiDirectJoiner.fail("error", detail: "missing networkName or passphrase")
-                return BridgeResponse.success(data: ["ok": false])
+                return BridgeResponse.success(data: ["ok": false, "error": "networkName and passphrase are required"])
+            }
+            if let error = WifiDirectJoiner.credentialsError(networkName: name, passphrase: passphrase) {
+                return BridgeResponse.success(data: ["ok": false, "error": error])
             }
             WifiDirectJoiner.shared.connect(networkName: name, passphrase: passphrase)
             return BridgeResponse.success(data: ["ok": true])
         }
     }
 
+    /// Leave the group (or cancel a join in progress). Always answers with Disconnected.
     class Disconnect: BridgeFunction {
         func execute(parameters: [String: Any]) throws -> [String: Any] {
             WifiDirectJoiner.shared.disconnect()
@@ -65,23 +68,18 @@ enum WifiDirectFunctions {
         }
     }
 
-    /// Render text as a QR code PNG at `dest`.
+    /// Render text as a QR code PNG at `dest`. Params: text, dest, size (px),
+    /// foreground / background ("#RRGGBB" or "#AARRGGBB"). Synchronous.
     class QrCode: BridgeFunction {
         func execute(parameters: [String: Any]) throws -> [String: Any] {
             guard let text = parameters["text"] as? String, let dest = parameters["dest"] as? String else {
                 return BridgeResponse.success(data: ["ok": false])
             }
-            let size = CGFloat((parameters["size"] as? NSNumber)?.doubleValue ?? 640)
+            let size = min(max((parameters["size"] as? NSNumber)?.intValue ?? 640, 64), 4096)
+            let foreground = QrRenderer.color(hex: parameters["foreground"] as? String) ?? CGColor(red: 0, green: 0, blue: 0, alpha: 1)
+            let background = QrRenderer.color(hex: parameters["background"] as? String) ?? CGColor(red: 1, green: 1, blue: 1, alpha: 1)
 
-            let filter = CIFilter.qrCodeGenerator()
-            filter.message = Data(text.utf8)
-            filter.correctionLevel = "M"
-            guard let output = filter.outputImage else { return BridgeResponse.success(data: ["ok": false]) }
-
-            let scale = size / output.extent.width
-            let scaled = output.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-            guard let cgImage = CIContext().createCGImage(scaled, from: scaled.extent),
-                  let png = UIImage(cgImage: cgImage).pngData() else {
+            guard let png = QrRenderer.png(text: text, size: size, foreground: foreground, background: background) else {
                 return BridgeResponse.success(data: ["ok": false])
             }
 
@@ -93,159 +91,68 @@ enum WifiDirectFunctions {
     }
 }
 
-// MARK: - Joining
+// MARK: - QR rendering
 
-final class WifiDirectJoiner {
+/// Draws a QR code with sharp modules: each module becomes an integer number
+/// of pixels (nearest neighbour, no interpolation), centred on a `size` x
+/// `size` canvas in the requested colours, like ZXing does on Android.
+enum QrRenderer {
 
-    static let shared = WifiDirectJoiner()
+    static func png(text: String, size: Int, foreground: CGColor, background: CGColor) -> Data? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(text.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage,
+              let modulesImage = CIContext().createCGImage(output, from: output.extent) else { return nil }
 
-    static let ownerIp = "192.168.49.1"
-    private static let groupPrefix = "192.168.49."
-    private static let joinTimeout: TimeInterval = 20
+        // One pixel per module: read the grid back.
+        let modules = modulesImage.width
+        guard modules > 0, modulesImage.height == modules else { return nil }
+        var grid = [UInt8](repeating: 255, count: modules * modules)
+        let readable = grid.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(
+                data: buffer.baseAddress, width: modules, height: modules, bitsPerComponent: 8, bytesPerRow: modules,
+                space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue
+            ) else { return false }
+            context.interpolationQuality = .none
+            context.draw(modulesImage, in: CGRect(x: 0, y: 0, width: modules, height: modules))
+            return true
+        }
+        guard readable else { return nil }
 
-    private let queue = DispatchQueue(label: "com.protendai.wifidirect.join")
-    private var joinedSsid: String?
-    private var connected = false
-    private var attempt = 0
+        let side = max(size, modules)
+        let scale = side / modules
+        let offset = (side - modules * scale) / 2
 
-    func status() -> [String: Any] {
-        let ip = Self.groupAddress()
-        return [
-            "supported": true,
-            "canHost": false,
-            "enabled": true,
-            "fiveGhz": true,
-            "permission": true,
-            "wifiJoined": Self.wifiAddress() != nil,
-            "connected": connected && ip != nil,
-            "isGroupOwner": false,
-            "groupOwnerIp": connected ? Self.ownerIp : "",
-        ]
-    }
+        guard let canvas = CGContext(
+            data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
 
-    func connect(networkName: String, passphrase: String) {
-        queue.async {
-            self.attempt += 1
-            let attempt = self.attempt
-
-            let configuration = NEHotspotConfiguration(ssid: networkName, passphrase: passphrase, isWEP: false)
-            configuration.joinOnce = true
-
-            NEHotspotConfigurationManager.shared.apply(configuration) { error in
-                self.queue.async {
-                    guard attempt == self.attempt else { return }
-
-                    if let error = error as NSError?,
-                       !(error.domain == NEHotspotConfigurationErrorDomain
-                         && error.code == NEHotspotConfigurationError.alreadyAssociated.rawValue) {
-                        Self.fail(Self.reason(for: error), detail: "\(error.domain) \(error.code): \(error.localizedDescription)")
-                        return
-                    }
-
-                    self.joinedSsid = networkName
-                    self.waitForAddress(attempt: attempt, deadline: Date().addingTimeInterval(Self.joinTimeout))
-                }
+        canvas.setFillColor(background)
+        canvas.fill(CGRect(x: 0, y: 0, width: side, height: side))
+        canvas.setFillColor(foreground)
+        for row in 0..<modules {
+            for column in 0..<modules where grid[row * modules + column] < 128 {
+                // Bitmap row 0 is the top of the image; Core Graphics' origin is bottom-left.
+                canvas.fill(CGRect(x: offset + column * scale, y: side - offset - (row + 1) * scale, width: scale, height: scale))
             }
         }
+
+        guard let image = canvas.makeImage() else { return nil }
+        return UIImage(cgImage: image).pngData()
     }
 
-    /// The join callback fires before DHCP finishes; wait for a 192.168.49.x address.
-    private func waitForAddress(attempt: Int, deadline: Date) {
-        guard attempt == self.attempt else { return }
+    /// "#RRGGBB" or "#AARRGGBB" (Android's Color.parseColor format).
+    static func color(hex: String?) -> CGColor? {
+        guard var digits = hex?.trimmingCharacters(in: .whitespaces), digits.hasPrefix("#") else { return nil }
+        digits.removeFirst()
+        guard digits.count == 6 || digits.count == 8, let value = UInt64(digits, radix: 16) else { return nil }
 
-        if Self.groupAddress() != nil {
-            connected = true
-            Self.dispatch("Connected", [
-                "connected": true,
-                "isGroupOwner": false,
-                "groupOwnerIp": Self.ownerIp,
-                "clients": 0,
-                "frequency": 0,
-            ])
-            return
-        }
-
-        if Date() >= deadline {
-            Self.fail("timeout", detail: "joined but got no 192.168.49.x address")
-            return
-        }
-
-        queue.asyncAfter(deadline: .now() + 0.5) { self.waitForAddress(attempt: attempt, deadline: deadline) }
-    }
-
-    func disconnect() {
-        queue.async {
-            self.attempt += 1
-            let wasConnected = self.connected
-            if let ssid = self.joinedSsid {
-                NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid)
-            }
-            self.joinedSsid = nil
-            self.connected = false
-            if wasConnected {
-                Self.dispatch("Disconnected", [:])
-            }
-        }
-    }
-
-    private static func reason(for error: NSError) -> String {
-        guard error.domain == NEHotspotConfigurationErrorDomain,
-              let code = NEHotspotConfigurationError(rawValue: error.code) else { return "error" }
-        switch code {
-        case .userDenied: return "declined"
-        case .invalidSSID, .invalidWPAPassphrase, .invalid: return "error"
-        case .pending: return "busy"
-        case .joinOnceNotSupported, .systemConfiguration, .internal, .unknown: return "error"
-        default: return "error"
-        }
-    }
-
-    // MARK: Addresses
-
-    /// Our IPv4 on the Wi-Fi Direct group (192.168.49.x), if joined.
-    static func groupAddress() -> String? {
-        return ipv4Addresses(interfacePrefix: "en").first { $0.hasPrefix(groupPrefix) }
-    }
-
-    /// Any IPv4 on the Wi-Fi interface (en0), i.e. joined to some network.
-    static func wifiAddress() -> String? {
-        return ipv4Addresses(interfacePrefix: "en0").first
-    }
-
-    private static func ipv4Addresses(interfacePrefix: String) -> [String] {
-        var addresses: [String] = []
-        var head: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&head) == 0, let first = head else { return [] }
-        defer { freeifaddrs(head) }
-
-        var cursor: UnsafeMutablePointer<ifaddrs>? = first
-        while let entry = cursor {
-            defer { cursor = entry.pointee.ifa_next }
-            let flags = Int32(entry.pointee.ifa_flags)
-            guard let addr = entry.pointee.ifa_addr,
-                  addr.pointee.sa_family == UInt8(AF_INET),
-                  (flags & IFF_UP) != 0,
-                  String(cString: entry.pointee.ifa_name).hasPrefix(interfacePrefix) else { continue }
-
-            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-            if getnameinfo(addr, socklen_t(addr.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
-                addresses.append(String(cString: host))
-            }
-        }
-        return addresses
-    }
-
-    // MARK: Events
-
-    static func fail(_ reason: String, detail: String) {
-        NSLog("WifiDirect: failed: \(reason) (\(detail))")
-        dispatch("ConnectionFailed", ["reason": reason, "detail": detail])
-    }
-
-    static func dispatch(_ event: String, _ payload: [String: Any]) {
-        DispatchQueue.main.async {
-            LaravelBridge.shared.send?("Protendai\\WifiDirect\\Events\\\(event)", payload)
-        }
+        let alpha = digits.count == 8 ? CGFloat((value >> 24) & 0xFF) / 255 : 1
+        let red = CGFloat((value >> 16) & 0xFF) / 255
+        let green = CGFloat((value >> 8) & 0xFF) / 255
+        let blue = CGFloat(value & 0xFF) / 255
+        return CGColor(red: red, green: green, blue: blue, alpha: alpha)
     }
 }
-
