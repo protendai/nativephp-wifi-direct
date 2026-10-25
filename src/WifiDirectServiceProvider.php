@@ -4,45 +4,21 @@ namespace Protendai\WifiDirect;
 
 use Illuminate\Support\ServiceProvider;
 use Native\Mobile\Testing\FakeBridge;
+use Protendai\WifiDirect\Testing\WifiDirectMacros;
 
 class WifiDirectServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
         $this->app->singleton('protendai.wifi-direct', fn (): WifiDirect => new WifiDirect);
+        $this->app->alias('protendai.wifi-direct', WifiDirect::class);
     }
 
     public function boot(): void
     {
-        $this->registerFakeBridgeMacros();
-    }
-
-    /**
-     * Test helper for screens that use the plugin:
-     *
-     *   Native::fakeBridge()->withWifiDirect(supported: true, permission: true);
-     */
-    private function registerFakeBridgeMacros(): void
-    {
-        if (! class_exists(FakeBridge::class) || FakeBridge::hasMacro('withWifiDirect')) {
-            return;
+        // Test sugar (withWifiDirect(), assertWifiDirectHosting(), ...) on a core with a macroable FakeBridge.
+        if (class_exists(FakeBridge::class) && method_exists(FakeBridge::class, 'macro')) {
+            WifiDirectMacros::register();
         }
-
-        FakeBridge::macro('withWifiDirect', function (bool $supported = true, bool $permission = true, bool $fiveGhz = true, bool $wifiJoined = true, bool $canHost = true): FakeBridge {
-            /** @var FakeBridge $this */
-            return $this
-                ->respondTo('WifiDirect.Status', [
-                    'supported' => $supported,
-                    'canHost' => $supported && $canHost,
-                    'enabled' => $supported,
-                    'fiveGhz' => $fiveGhz,
-                    'permission' => $permission,
-                    'wifiJoined' => $wifiJoined,
-                    'connected' => false,
-                    'isGroupOwner' => false,
-                    'groupOwnerIp' => '',
-                ])
-                ->respondTo('WifiDirect.QrCode', ['ok' => true]);
-        });
     }
 }
