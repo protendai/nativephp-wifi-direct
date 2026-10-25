@@ -12,9 +12,11 @@ Phone-to-phone networking with **no router and no internet**. One device hosts a
 | Platform | Host a group | Join a group | Notes |
 |---|---|---|---|
 | Android 10+ (API 29) | Yes | Yes | Needs a device with Wi-Fi Direct (`status()['supported']`). |
-| iOS 15+ | No | Yes, an Android phone's group | iOS has no Wi-Fi Direct API. The iPhone joins the Android group as a normal Wi-Fi client (`NEHotspotConfiguration`) after a system prompt. `status()['canHost']` is `false` and `createGroup()` fails with `cannot host`. Needs the Hotspot Configuration entitlement (declared by the plugin), so a paid Apple Developer team. |
+| iOS 15+ | No | **Experimental**: an Android phone's group | iOS has no Wi-Fi Direct API. The iPhone joins the Android group as a normal Wi-Fi client (`NEHotspotConfiguration`) after a system prompt. `status()['canHost']` is `false` and `createGroup()` fails with `cannot host`. Needs the Hotspot Configuration entitlement (declared by the plugin), so a paid Apple Developer team. |
 
 So two Android phones can pair either way round; an iPhone and an Android phone pair with the Android phone hosting.
+
+> **iPhone joining is experimental.** In device testing (iPhone 11 on iOS 18 joining a Galaxy A05s group on 2.4 GHz, 2026-10-25) iOS accepted the join request and then showed "Unable to join the network" without ever associating with the group, so the join timed out with `ConnectionFailed('timeout')`. Android-to-Android pairing works. Until iPhone joining is confirmed on more hosts, keep a fallback for iPhones, for example both phones on the same Wi-Fi network.
 
 ## Installation
 

@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [1.0.0] - 2026-10-25
 
+### Known issues
+- iPhone joining an Android group is experimental: on a Galaxy A05s host (2.4 GHz) iOS refused to associate. See the README.
+
+
 First public release, MIT licensed.
 
 ### Added
