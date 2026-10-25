@@ -1,40 +1,76 @@
 {
+    "name": "protendai/nativephp-wifi-direct",
+    "version": "1.0.0",
+    "description": "Wi-Fi Direct for NativePHP Mobile: phone-to-phone networking with no router, with built-in QR pairing. Android hosts and joins; iOS joins an Android phone's group.",
     "namespace": "WifiDirect",
+    "keywords": [
+        "wifi direct",
+        "p2p",
+        "peer to peer",
+        "offline",
+        "local network",
+        "qr code",
+        "pairing"
+    ],
+    "category": "connectivity",
+    "license": "MIT",
+    "pricing": {
+        "type": "free"
+    },
+    "author": {
+        "name": "Tendai Karuma",
+        "email": "karumatendai@gmail.com",
+        "url": "https://github.com/protendai"
+    },
+    "homepage": "https://github.com/protendai/nativephp-wifi-direct",
+    "repository": "https://github.com/protendai/nativephp-wifi-direct",
+    "funding": [],
+    "platforms": [
+        "android",
+        "ios"
+    ],
     "bridge_functions": [
         {
             "name": "WifiDirect.Status",
             "android": "com.protendai.wifidirect.WifiDirectFunctions.Status",
-            "ios": "WifiDirectFunctions.Status"
+            "ios": "WifiDirectFunctions.Status",
+            "description": "Capabilities and current state (supported, canHost, enabled, fiveGhz, permission, wifiJoined, connected, isGroupOwner, groupOwnerIp). Synchronous."
         },
         {
             "name": "WifiDirect.RequestPermission",
             "android": "com.protendai.wifidirect.WifiDirectFunctions.RequestPermission",
-            "ios": "WifiDirectFunctions.RequestPermission"
+            "ios": "WifiDirectFunctions.RequestPermission",
+            "description": "Ask for Nearby Wi-Fi devices (Android 13+) or location (Android 10-12). Async: PermissionResult."
         },
         {
             "name": "WifiDirect.CreateGroup",
             "android": "com.protendai.wifidirect.WifiDirectFunctions.CreateGroup",
-            "ios": "WifiDirectFunctions.CreateGroup"
+            "ios": "WifiDirectFunctions.CreateGroup",
+            "description": "Host a group (Android only). Async: GroupCreated or ConnectionFailed within timeoutSeconds."
         },
         {
             "name": "WifiDirect.Connect",
             "android": "com.protendai.wifidirect.WifiDirectFunctions.Connect",
-            "ios": "WifiDirectFunctions.Connect"
+            "ios": "WifiDirectFunctions.Connect",
+            "description": "Join a group by network name and passphrase without a system dialog (Android) or as a Wi-Fi client (iOS). Async: Connected or ConnectionFailed. Malformed credentials return ok:false and fire no event."
         },
         {
             "name": "WifiDirect.Disconnect",
             "android": "com.protendai.wifidirect.WifiDirectFunctions.Disconnect",
-            "ios": "WifiDirectFunctions.Disconnect"
+            "ios": "WifiDirectFunctions.Disconnect",
+            "description": "Leave or tear down the group and cancel anything in flight. Async: Disconnected (always)."
         },
         {
             "name": "WifiDirect.QrCode",
             "android": "com.protendai.wifidirect.WifiDirectFunctions.QrCode",
-            "ios": "WifiDirectFunctions.QrCode"
+            "ios": "WifiDirectFunctions.QrCode",
+            "description": "Render text as a QR code PNG. Synchronous."
         },
         {
             "name": "WifiDirect.ScanQr",
             "android": "com.protendai.wifidirect.WifiDirectFunctions.ScanQr",
-            "ios": "WifiDirectFunctions.ScanQr"
+            "ios": "WifiDirectFunctions.ScanQr",
+            "description": "Open a QR code scanner. Async: QrScanned or QrScanCancelled."
         }
     ],
     "events": [
@@ -47,13 +83,15 @@
         "Protendai\\WifiDirect\\Events\\QrScanCancelled"
     ],
     "android": {
+        "min_version": 29,
         "permissions": [
             "android.permission.ACCESS_WIFI_STATE",
             "android.permission.CHANGE_WIFI_STATE",
             "android.permission.ACCESS_NETWORK_STATE",
             "android.permission.CHANGE_NETWORK_STATE",
             "<uses-permission android:name=\"android.permission.NEARBY_WIFI_DEVICES\" android:usesPermissionFlags=\"neverForLocation\" />",
-            "<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" android:maxSdkVersion=\"32\" />"
+            "<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" android:maxSdkVersion=\"32\" />",
+            "<uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\" android:maxSdkVersion=\"32\" />"
         ],
         "features": [
             {
@@ -66,16 +104,21 @@
                 "com.google.zxing:core:3.5.3",
                 "com.google.android.gms:play-services-code-scanner:16.1.0"
             ]
-        },
-        "min_version": 29
+        }
     },
     "ios": {
-        "min_version": "18.0",
+        "min_version": "15.0",
         "info_plist": {
-            "NSCameraUsageDescription": "The camera scans the other phone's pairing code."
+            "NSCameraUsageDescription": "The camera is used to scan pairing codes shown by nearby devices.",
+            "NSLocalNetworkUsageDescription": "Used to connect directly to nearby devices to exchange data."
         },
         "entitlements": {
             "com.apple.developer.networking.HotspotConfiguration": true
+        },
+        "dependencies": {
+            "swift_packages": [],
+            "pods": []
         }
-    }
+    },
+    "service_provider": "Protendai\\WifiDirect\\WifiDirectServiceProvider"
 }
