@@ -33,18 +33,19 @@ object WifiDirectFunctions {
         }
     }
 
-    /** Ask for NEARBY_WIFI_DEVICES (Android 13+) or location (older). Result: PermissionResult. */
+    /**
+     * Ask for NEARBY_WIFI_DEVICES (Android 13+) or fine + coarse location
+     * (Android 10-12). Result: PermissionResult (immediately if already granted).
+     */
     class RequestPermission(private val activity: FragmentActivity) : BridgeFunction {
         override fun execute(parameters: Map<String, Any>): Map<String, Any> {
             WifiDirectManager.attach(activity)
             if (WifiDirectManager.hasPermission()) {
-                WifiDirectManager.dispatch("PermissionResult", JSONObject().put("granted", true))
+                WifiDirectManager.dispatch("PermissionResult", JSONObject().put("granted", true).put("permanentlyDenied", false))
                 return mapOf("ok" to true, "granted" to true)
             }
-            PermissionFragment.request(activity, WifiDirectManager.requiredPermissions()) { granted ->
-                WifiDirectManager.dispatch("PermissionResult", JSONObject().put("granted", granted))
-            }
-            return mapOf("ok" to true)
+            PermissionFragment.request(activity, WifiDirectManager.requiredPermissions())
+            return mapOf("ok" to true, "granted" to false)
         }
     }
 
@@ -57,26 +58,32 @@ object WifiDirectFunctions {
         override fun execute(parameters: Map<String, Any>): Map<String, Any> {
             WifiDirectManager.attach(activity)
             val band = parameters["band"] as? String ?: "5ghz"
-            val timeout = (parameters["timeoutSeconds"] as? Number)?.toLong() ?: 20L
-            return mapOf("ok" to WifiDirectManager.createGroup(band, timeout * 1000))
+            val timeout = ((parameters["timeoutSeconds"] as? Number)?.toLong() ?: 20L).coerceIn(5L, 300L)
+            WifiDirectManager.createGroup(band, timeout * 1000)
+            return mapOf("ok" to true)
         }
     }
 
     /**
      * Join a group by its network name and passphrase, without the system
      * "accept invitation" dialog. Result: Connected or ConnectionFailed.
+     * Malformed credentials are refused here ({ok: false, error}) and no
+     * event follows: WifiP2pConfig.Builder would throw on them.
      */
     class Connect(private val activity: FragmentActivity) : BridgeFunction {
         override fun execute(parameters: Map<String, Any>): Map<String, Any> {
             WifiDirectManager.attach(activity)
-            val name = parameters["networkName"] as? String ?: return mapOf("ok" to false)
-            val passphrase = parameters["passphrase"] as? String ?: return mapOf("ok" to false)
+            val name = parameters["networkName"] as? String
+            val passphrase = parameters["passphrase"] as? String
+            if (name == null || passphrase == null) return mapOf("ok" to false, "error" to "networkName and passphrase are required")
+            WifiDirectManager.credentialsError(name, passphrase)?.let { return mapOf("ok" to false, "error" to it) }
             val band = parameters["band"] as? String ?: "auto"
-            return mapOf("ok" to WifiDirectManager.connect(name, passphrase, band))
+            WifiDirectManager.connect(name, passphrase, band)
+            return mapOf("ok" to true)
         }
     }
 
-    /** Leave or tear down the current group. Result: Disconnected. */
+    /** Leave or tear down the current group, cancelling anything in flight. Result: Disconnected (always). */
     class Disconnect(private val activity: FragmentActivity) : BridgeFunction {
         override fun execute(parameters: Map<String, Any>): Map<String, Any> {
             WifiDirectManager.attach(activity)
@@ -93,7 +100,7 @@ object WifiDirectFunctions {
         override fun execute(parameters: Map<String, Any>): Map<String, Any> {
             val text = parameters["text"] as? String ?: return mapOf("ok" to false)
             val dest = parameters["dest"] as? String ?: return mapOf("ok" to false)
-            val size = (parameters["size"] as? Number)?.toInt() ?: 640
+            val size = ((parameters["size"] as? Number)?.toInt() ?: 640).coerceIn(64, 4096)
             val foreground = parseColor(parameters["foreground"] as? String, Color.BLACK)
             val background = parseColor(parameters["background"] as? String, Color.WHITE)
 
@@ -126,13 +133,14 @@ object WifiDirectFunctions {
     class ScanQr(private val activity: FragmentActivity) : BridgeFunction {
         override fun execute(parameters: Map<String, Any>): Map<String, Any> {
             WifiDirectManager.attach(activity)
-            val options = GmsBarcodeScannerOptions.Builder()
-                .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-                .enableAutoZoom()
-                .build()
-            val scanner = GmsBarcodeScanning.getClient(activity, options)
-
             activity.runOnUiThread {
+                if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
+                val options = GmsBarcodeScannerOptions.Builder()
+                    .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                    .enableAutoZoom()
+                    .build()
+                val scanner = GmsBarcodeScanning.getClient(activity, options)
+
                 // First use may need the scanner module downloaded by Play services.
                 ModuleInstall.getClient(activity)
                     .installModules(ModuleInstallRequest.newBuilder().addApi(scanner).build())
